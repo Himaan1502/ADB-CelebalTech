@@ -1,0 +1,47 @@
+name: CI/CD for Databricks Bundles
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # Required for OIDC authentication
+  contents: read    # Required to checkout code
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    uses: Himaan1502/databricks-ci-cd-templates/.github/workflows/reusable-ci-cd.yml@main
+    with:
+      environment: dev
+    secrets:
+      client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+  deploy-dev:
+    if: github.ref == 'refs/heads/develop'
+    uses: Himaan1502/databricks-ci-cd-templates/.github/workflows/reusable-ci-cd.yml@main
+    with:
+      environment: dev
+    secrets:
+      client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+  deploy-uat:
+    if: github.ref == 'refs/heads/main'
+    uses: Himaan1502/databricks-ci-cd-templates/.github/workflows/reusable-ci-cd.yml@main
+    with:
+      environment: uat
+    secrets:
+      client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
