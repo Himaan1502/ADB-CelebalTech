@@ -36,7 +36,7 @@ targets:
     workspace:
       host: https://adb-957375356088406.6.azuredatabricks.net
       # We explicitly deploy to /Workspace/Users/himaanshu.sharma@celebaltech.com to make sure we only have a single copy.
-      root_path: /Workspace/Users/himaanshu.sharma@celebaltech.com/.bundle/${bundle.name}/${bundle.target}
+      root_path: /Workspace/Users/himaan.celebal1@outlook.com/.bundle/${bundle.name}/${bundle.target}
     permissions:
-      - user_name: himaanshu.sharma@celebaltech.com
+      - user_name: himaan.celebal1@outlook.com
         level: CAN_MANAGE
