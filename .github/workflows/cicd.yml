@@ -1,5 +1,4 @@
 name: CI/CD for Databricks Bundles
-
 on:
   push:
     branches:
@@ -10,6 +9,12 @@ on:
       - main
       - develop
   workflow_dispatch:
+    inputs:
+      skip-linting:
+        description: 'Skip linting checks'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   id-token: write   # Required for OIDC authentication
@@ -21,6 +26,7 @@ jobs:
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
       environment: dev
+      skip-linting: false  # Always run linting for PRs
     secrets:
       client-id: ${{ secrets.AZURE_CLIENT_ID }}
       tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -31,6 +37,7 @@ jobs:
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
       environment: dev
+      skip-linting: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.skip-linting == 'true' }}
     secrets:
       client-id: ${{ secrets.AZURE_CLIENT_ID }}
       tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -41,6 +48,7 @@ jobs:
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
       environment: uat
+      skip-linting: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.skip-linting == 'true' }}
     secrets:
       client-id: ${{ secrets.AZURE_CLIENT_ID }}
       tenant-id: ${{ secrets.AZURE_TENANT_ID }}
