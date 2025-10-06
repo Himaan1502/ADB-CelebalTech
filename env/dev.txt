@@ -1,3 +1,3 @@
 # Dev Environment Variables
 TARGET=dev
-DATABRICKS_HOST=https://adb-3753909672921130.10.azuredatabricks.net
+DATABRICKS_HOST=https://adb-4444264018179996.16.azuredatabricks.net
