@@ -22,7 +22,7 @@ targets:
     mode: development
     default: true
     workspace:
-      host: https://adb-3753909672921130.10.azuredatabricks.net
+      host: https://adb-4444264018179996.16.azuredatabricks.net
 
     presets:
       # Set dynamic_version: true on all artifacts of type "whl".
@@ -34,7 +34,7 @@ targets:
   uat:
     mode: production
     workspace:
-      host: https://adb-4090410934295036.16.azuredatabricks.net
+      host: https://adb-957375356088406.6.azuredatabricks.net
       # We explicitly deploy to /Workspace/Users/himaanshu.sharma@celebaltech.com to make sure we only have a single copy.
       root_path: /Workspace/Users/himaanshu.sharma@celebaltech.com/.bundle/${bundle.name}/${bundle.target}
     permissions:
