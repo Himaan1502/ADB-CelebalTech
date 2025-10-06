@@ -40,3 +40,5 @@ targets:
     permissions:
       - user_name: himaan.celebal1@outlook.com
         level: CAN_MANAGE
+      - service_principal_name: 47ad5252-9aee-4de8-85e2-62433b16894f
+        level: CAN_MANAGE
