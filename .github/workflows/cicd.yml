@@ -29,7 +29,7 @@ permissions:
 jobs:
   # Secret Detection - Runs first to block pipeline if secrets found
   secret-scan:
-    name: 🔒 Secret Detection
+    name: Secret Detection
     runs-on: ubuntu-latest
     if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.skip-secret-scan == 'true') }}
     permissions:
@@ -77,12 +77,12 @@ jobs:
       # Human-readable console summary
       - name: Secret scan summary
         if: success()
-        run: echo "✅ No secrets detected - pipeline can proceed"
+        run: echo "No secrets detected - pipeline can proceed"
 
       - name: Secret scan failed
         if: failure()
         run: |
-          echo "🚨 SECRETS DETECTED!"
+          echo "SECRETS DETECTED!"
           echo "Pipeline blocked to prevent credential exposure."
           echo "Please remove secrets and use GitHub Secrets or Azure Key Vault instead."
           exit 1
@@ -90,7 +90,9 @@ jobs:
   # PR Validation - Always includes linting
   validate:
     needs: [secret-scan]
-    if: github.event_name == 'pull_request' && (needs.secret-scan.result == 'success' || needs.secret-scan.result == 'skipped')
+    if: |
+      github.event_name == 'pull_request' && 
+      (needs.secret-scan.result == 'success' || needs.secret-scan.result == 'skipped')
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
       environment: dev
@@ -103,7 +105,9 @@ jobs:
   # DEV Deployment - WITH Linting
   deploy-dev:
     needs: [secret-scan]
-    if: github.event_name != 'pull_request' && (needs.secret-scan.result == 'success' || needs.secret-scan.result == 'skipped')
+    if: |
+      github.event_name != 'pull_request' && 
+      (needs.secret-scan.result == 'success' || needs.secret-scan.result == 'skipped')
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
       environment: dev
@@ -116,7 +120,9 @@ jobs:
   # UAT Deployment - NO Linting (depends on dev success)
   deploy-uat:
     needs: [deploy-dev]
-    if: github.event_name != 'pull_request'
+    if: |
+      github.event_name != 'pull_request' && 
+      needs.deploy-dev.result == 'success'
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
       environment: uat
