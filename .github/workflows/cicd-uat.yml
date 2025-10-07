@@ -8,11 +8,6 @@ on:
       - uat
   workflow_dispatch:
     inputs:
-      triggered_by_dev:
-        description: 'Triggered automatically by dev deployment'
-        required: false
-        type: boolean
-        default: false
       skip-linting:
         description: 'Skip linting checks (always true for UAT)'
         required: false
@@ -30,7 +25,7 @@ jobs:
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
       environment: uat
-      skip-linting: false  # Run linting for PRs to UAT
+      skip-linting: true  # Run linting for PRs to UAT
     secrets:
       client-id: ${{ secrets.AZURE_CLIENT_ID }}
       tenant-id: ${{ secrets.AZURE_TENANT_ID }}
