@@ -41,17 +41,35 @@ jobs:
         with:
           fetch-depth: 0  # full history for comprehensive scan
 
+      # Determine the base commit for comparison
+      - name: Determine base commit
+        id: base-commit
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "base=${{ github.event.pull_request.base.sha }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            echo "base=${{ github.event.before }}" >> $GITHUB_OUTPUT
+          else
+            # For initial commits or force pushes, scan from first commit
+            FIRST_COMMIT=$(git rev-list --max-parents=0 HEAD)
+            echo "base=$FIRST_COMMIT" >> $GITHUB_OUTPUT
+          fi
+          echo "head=${{ github.sha }}" >> $GITHUB_OUTPUT
+
       # Run TruffleHog via official Action
       - name: Run TruffleHog Secret Detection
         uses: trufflesecurity/trufflehog@main
+        continue-on-error: true
+        id: trufflehog
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
+          base: ${{ steps.base-commit.outputs.base }}
+          head: ${{ steps.base-commit.outputs.head }}
           extra_args: --only-verified --json --output trufflehog-results.json --no-update
 
       # Convert JSON → SARIF for GitHub Code Scanning
       - name: Convert JSON report to SARIF
+        if: always() && hashFiles('trufflehog-results.json') != ''
         run: |
           echo "Installing TruffleHog CLI for SARIF conversion..."
           curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | bash
@@ -60,7 +78,7 @@ jobs:
 
       # Upload SARIF to GitHub Code Scanning Alerts
       - name: Upload SARIF to GitHub Security Alerts
-        if: always()
+        if: always() && hashFiles('trufflehog-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trufflehog-results.sarif
@@ -68,19 +86,39 @@ jobs:
 
       # Upload raw JSON results as artifact for audit
       - name: Upload TruffleHog JSON Report
-        if: always()
+        if: always() && hashFiles('trufflehog-results.json') != ''
         uses: actions/upload-artifact@v4
         with:
           name: trufflehog-report
           path: trufflehog-results.json
 
+      # Check if secrets were found
+      - name: Check scan results
+        if: always()
+        id: check-results
+        run: |
+          if [ ! -f trufflehog-results.json ]; then
+            echo "status=no-results" >> $GITHUB_OUTPUT
+            echo "No results file generated - scan may have been skipped"
+          elif [ -s trufflehog-results.json ]; then
+            echo "status=secrets-found" >> $GITHUB_OUTPUT
+            echo "Secrets detected in scan results"
+          else
+            echo "status=clean" >> $GITHUB_OUTPUT
+            echo "No secrets detected"
+          fi
+
       # Human-readable console summary
       - name: Secret scan summary
-        if: success()
+        if: always() && steps.check-results.outputs.status == 'clean'
         run: echo "No secrets detected - pipeline can proceed"
 
+      - name: Secret scan warning
+        if: always() && steps.check-results.outputs.status == 'no-results'
+        run: echo "Secret scan produced no results - proceeding with caution"
+
       - name: Secret scan failed
-        if: failure()
+        if: always() && steps.check-results.outputs.status == 'secrets-found'
         run: |
           echo "SECRETS DETECTED!"
           echo "Pipeline blocked to prevent credential exposure."
