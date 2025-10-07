@@ -1,0 +1,183 @@
+name: CI/CD - DEV Environment
+on:
+  push:
+    branches:
+      - dev
+  pull_request:
+    branches:
+      - dev
+  workflow_dispatch:
+    inputs:
+      skip-linting:
+        description: 'Skip linting checks'
+        required: false
+        type: boolean
+        default: false
+      skip-secret-scan:
+        description: 'Skip secret scanning (emergency only)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write   # Required for OIDC authentication
+  contents: read    # Required to checkout code
+  security-events: write  # Required for security scanning results
+
+jobs:
+  # Secret Detection - Runs first to block pipeline if secrets found
+  secret-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.skip-secret-scan == 'true') }}
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for comprehensive scan
+
+      # Determine the base commit for comparison
+      - name: Determine base commit
+        id: base-commit
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "base=${{ github.event.pull_request.base.sha }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            echo "base=${{ github.event.before }}" >> $GITHUB_OUTPUT
+          else
+            # For initial commits or force pushes, scan from first commit
+            FIRST_COMMIT=$(git rev-list --max-parents=0 HEAD)
+            echo "base=$FIRST_COMMIT" >> $GITHUB_OUTPUT
+          fi
+          echo "head=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      # Run TruffleHog with proper output capture
+      - name: Run TruffleHog Secret Detection
+        continue-on-error: true
+        id: trufflehog
+        run: |
+          # Install TruffleHog CLI
+          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+          
+          # Run TruffleHog and capture output
+          trufflehog git file://. \
+            --since-commit=${{ steps.base-commit.outputs.base }} \
+            --branch=${{ github.ref_name }} \
+            --only-verified \
+            --json \
+            --no-update > trufflehog-results.json || true
+          
+          # Check if any secrets were found
+          if [ -s trufflehog-results.json ]; then
+            echo "secrets-found=true" >> $GITHUB_OUTPUT
+            echo "✗ Secrets detected!"
+          else
+            echo "secrets-found=false" >> $GITHUB_OUTPUT
+            echo "✓ No secrets detected"
+          fi
+
+      # Convert JSON → SARIF for GitHub Code Scanning
+      - name: Convert JSON report to SARIF
+        if: always() && hashFiles('trufflehog-results.json') != ''
+        run: |
+          if [ -s trufflehog-results.json ]; then
+            echo "Converting JSON to SARIF..."
+            trufflehog convert --input trufflehog-results.json --format sarif --output trufflehog-results.sarif || true
+          else
+            echo "No secrets found, skipping SARIF conversion"
+          fi
+
+      # Upload SARIF to GitHub Code Scanning Alerts
+      - name: Upload SARIF to GitHub Security Alerts
+        if: always() && hashFiles('trufflehog-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trufflehog-results.sarif
+          category: trufflehog-dev
+
+      # Upload raw JSON results as artifact for audit
+      - name: Upload TruffleHog JSON Report
+        if: always() && hashFiles('trufflehog-results.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: trufflehog-report-dev
+          path: trufflehog-results.json
+
+      # Human-readable console summary
+      - name: Secret scan summary - Clean
+        if: steps.trufflehog.outputs.secrets-found == 'false'
+        run: echo "No secrets detected - pipeline can proceed"
+
+      - name: Secret scan summary - Secrets Found
+        if: steps.trufflehog.outputs.secrets-found == 'true'
+        run: |
+          echo "VERIFIED SECRETS DETECTED!"
+          echo ""
+          echo "Pipeline blocked to prevent credential exposure."
+          echo "Detected secrets:"
+          cat trufflehog-results.json | jq -r '.DetectorName + ": " + .Raw[:50] + "..."' || cat trufflehog-results.json
+          echo ""
+          echo "Action required:"
+          echo "1. Remove the secrets from your code"
+          echo "2. Rotate/revoke the exposed credentials immediately"
+          echo "3. Use GitHub Secrets or Azure Key Vault for sensitive data"
+          exit 1
+
+  # PR Validation - Always includes linting
+  validate:
+    needs: [secret-scan]
+    if: |
+      github.event_name == 'pull_request' && 
+      (needs.secret-scan.result == 'success' || needs.secret-scan.result == 'skipped')
+    uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
+    with:
+      environment: dev
+      skip-linting: false  # Always run linting for PRs
+    secrets:
+      client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+  # DEV Deployment - WITH Linting
+  deploy-dev:
+    needs: [secret-scan]
+    if: |
+      github.event_name != 'pull_request' && 
+      (needs.secret-scan.result == 'success' || needs.secret-scan.result == 'skipped')
+    uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
+    with:
+      environment: dev
+      skip-linting: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.skip-linting == 'true' }}
+    secrets:
+      client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+  # Trigger UAT deployment after successful dev deployment
+  trigger-uat:
+    needs: [deploy-dev]
+    if: |
+      github.event_name != 'pull_request' && 
+      needs.deploy-dev.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger UAT Workflow
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'cicd-uat.yml',
+              ref: 'uat',
+              inputs: {
+                triggered_by_dev: 'true',
+                dev_run_id: '${{ github.run_id }}',
+                dev_sha: '${{ github.sha }}'
+              }
+            });
+            console.log('UAT deployment triggered successfully');
