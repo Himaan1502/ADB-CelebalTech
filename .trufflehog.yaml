@@ -1,0 +1,86 @@
+# TruffleHog Configuration for Databricks Asset Bundles
+# Place this file in the root of your repository
+
+# Paths to exclude from secret scanning
+exclude_paths:
+  - .git/
+  - .github/
+  - .databricks/
+  - .venv/
+  - venv/
+  - __pycache__/
+  - "*.pyc"
+  - node_modules/
+  - .terraform/
+  - "*.tfstate"
+  - "*.tfstate.backup"
+  - .pytest_cache/
+  - htmlcov/
+  - dist/
+  - build/
+  - "*.egg-info/"
+
+# Specific detectors to enable (Databricks-focused)
+detectors:
+  - name: azure
+    enabled: true
+  - name: databricks
+    enabled: true
+  - name: github
+    enabled: true
+  - name: slack
+    enabled: true
+  - name: aws
+    enabled: true
+  - name: private-key
+    enabled: true
+  - name: generic-api-key
+    enabled: true
+
+# Allowlist for known false positives
+allow:
+  # Paths that contain example/test data
+  paths:
+    - tests/fixtures/
+    - tests/test_data/
+    - examples/
+    - docs/examples/
+    - .github/workflows/  # Workflow files themselves
+  
+  # Regex patterns to ignore (common false positives)
+  regexes:
+    # Example/dummy credentials
+    - "example\\.com"
+    - "dummy.*secret"
+    - "fake.*token"
+    - "test.*key"
+    - "sample.*password"
+    - "placeholder"
+    - "your-.*-here"
+    - "xxx.*xxx"
+    - "yyy.*yyy"
+    - "zzz.*zzz"
+    
+    # Databricks workspace URLs (not secrets)
+    - "https://adb-[0-9]+\\.[0-9]+\\.azuredatabricks\\.net"
+    
+    # Common non-secret patterns
+    - "localhost"
+    - "127\\.0\\.0\\.1"
+    - "0\\.0\\.0\\.0"
+    
+    # Documentation and comments
+    - "INSERT.*HERE"
+    - "REPLACE.*WITH"
+    - "TODO"
+    - "FIXME"
+
+# Verification settings
+verify: true  # Verify that found secrets are actually valid
+
+# Output format
+# json, yaml, or text
+output-format: text
+
+# Only fail on verified secrets (reduces false positives)
+only-verified: true
