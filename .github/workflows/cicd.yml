@@ -31,24 +31,48 @@ jobs:
   secret-scan:
     runs-on: ubuntu-latest
     if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.skip-secret-scan == 'true') }}
+    permissions:
+      security-events: write
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Full git history for comprehensive scan
-          
-      - name: TruffleHog Secret Detection
-        uses: trufflesecurity/trufflehog@main
+
+      - name: Run TruffleHog Secret Detection (SARIF output)
+        id: trufflehog
+        run: |
+          echo "Running TruffleHog scan..."
+          trufflehog git file://. \
+            --no-update \
+            --only-verified \
+            --fail \
+            --json \
+            --output trufflehog-results.json || true
+
+          # Convert JSON to SARIF
+          echo "Converting JSON to SARIF..."
+          trufflehog convert --input trufflehog-results.json --format sarif --output trufflehog-results.sarif || true
+
+      - name: Upload SARIF to GitHub Security Alerts
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
         with:
-          path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
-          extra_args: --only-verified --fail
-          
+          sarif_file: trufflehog-results.sarif
+          category: trufflehog
+
+      - name: Upload Raw Report Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trufflehog-report
+          path: trufflehog-results.json
+
       - name: Secret scan summary
         if: success()
         run: echo "✅ No secrets detected - pipeline can proceed"
-        
+
       - name: Secret scan failed
         if: failure()
         run: |
