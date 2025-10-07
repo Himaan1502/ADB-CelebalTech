@@ -15,15 +15,52 @@ on:
         required: false
         type: boolean
         default: false
+      skip-secret-scan:
+        description: 'Skip secret scanning (emergency only)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   id-token: write   # Required for OIDC authentication
   contents: read    # Required to checkout code
+  security-events: write  # Required for security scanning results
 
 jobs:
+  # Secret Detection - Runs first to block pipeline if secrets found
+  secret-scan:
+    runs-on: ubuntu-latest
+    if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.skip-secret-scan == 'true') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full git history for comprehensive scan
+          
+      - name: TruffleHog Secret Detection
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified --fail
+          
+      - name: Secret scan summary
+        if: success()
+        run: echo "✅ No secrets detected - pipeline can proceed"
+        
+      - name: Secret scan failed
+        if: failure()
+        run: |
+          echo "🚨 SECRETS DETECTED!"
+          echo "Pipeline blocked to prevent credential exposure."
+          echo "Please remove secrets and use GitHub Secrets or Azure Key Vault instead."
+          exit 1
+
   # PR Validation - Always includes linting
   validate:
-    if: github.event_name == 'pull_request'
+    needs: [secret-scan]
+    if: github.event_name == 'pull_request' && (needs.secret-scan.result == 'success' || needs.secret-scan.result == 'skipped')
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
       environment: dev
@@ -35,7 +72,8 @@ jobs:
 
   # DEV Deployment - WITH Linting
   deploy-dev:
-    if: github.event_name != 'pull_request'
+    needs: [secret-scan]
+    if: github.event_name != 'pull_request' && (needs.secret-scan.result == 'success' || needs.secret-scan.result == 'skipped')
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
       environment: dev
@@ -47,8 +85,8 @@ jobs:
 
   # UAT Deployment - NO Linting (depends on dev success)
   deploy-uat:
+    needs: [deploy-dev]
     if: github.event_name != 'pull_request'
-    needs: deploy-dev  # UAT only runs after dev succeeds
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
       environment: uat
