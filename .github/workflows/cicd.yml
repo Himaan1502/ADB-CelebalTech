@@ -56,25 +56,41 @@ jobs:
           fi
           echo "head=${{ github.sha }}" >> $GITHUB_OUTPUT
 
-      # Run TruffleHog via official Action
+      # Run TruffleHog with proper output capture
       - name: Run TruffleHog Secret Detection
-        uses: trufflesecurity/trufflehog@main
         continue-on-error: true
         id: trufflehog
-        with:
-          path: ./
-          base: ${{ steps.base-commit.outputs.base }}
-          head: ${{ steps.base-commit.outputs.head }}
-          extra_args: --only-verified --json --output trufflehog-results.json --no-update
+        run: |
+          # Install TruffleHog CLI
+          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+          
+          # Run TruffleHog and capture output
+          trufflehog git file://. \
+            --since-commit=${{ steps.base-commit.outputs.base }} \
+            --branch=${{ github.ref_name }} \
+            --only-verified \
+            --json \
+            --no-update > trufflehog-results.json || true
+          
+          # Check if any secrets were found
+          if [ -s trufflehog-results.json ]; then
+            echo "secrets-found=true" >> $GITHUB_OUTPUT
+            echo "✗ Secrets detected!"
+          else
+            echo "secrets-found=false" >> $GITHUB_OUTPUT
+            echo "✓ No secrets detected"
+          fi
 
       # Convert JSON → SARIF for GitHub Code Scanning
       - name: Convert JSON report to SARIF
         if: always() && hashFiles('trufflehog-results.json') != ''
         run: |
-          echo "Installing TruffleHog CLI for SARIF conversion..."
-          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | bash
-          echo "Converting JSON to SARIF..."
-          trufflehog convert --input trufflehog-results.json --format sarif --output trufflehog-results.sarif || true
+          if [ -s trufflehog-results.json ]; then
+            echo "Converting JSON to SARIF..."
+            trufflehog convert --input trufflehog-results.json --format sarif --output trufflehog-results.sarif || true
+          else
+            echo "No secrets found, skipping SARIF conversion"
+          fi
 
       # Upload SARIF to GitHub Code Scanning Alerts
       - name: Upload SARIF to GitHub Security Alerts
@@ -92,37 +108,24 @@ jobs:
           name: trufflehog-report
           path: trufflehog-results.json
 
-      # Check if secrets were found
-      - name: Check scan results
-        if: always()
-        id: check-results
-        run: |
-          if [ ! -f trufflehog-results.json ]; then
-            echo "status=no-results" >> $GITHUB_OUTPUT
-            echo "No results file generated - scan may have been skipped"
-          elif [ -s trufflehog-results.json ]; then
-            echo "status=secrets-found" >> $GITHUB_OUTPUT
-            echo "Secrets detected in scan results"
-          else
-            echo "status=clean" >> $GITHUB_OUTPUT
-            echo "No secrets detected"
-          fi
-
       # Human-readable console summary
-      - name: Secret scan summary
-        if: always() && steps.check-results.outputs.status == 'clean'
+      - name: Secret scan summary - Clean
+        if: steps.trufflehog.outputs.secrets-found == 'false'
         run: echo "No secrets detected - pipeline can proceed"
 
-      - name: Secret scan warning
-        if: always() && steps.check-results.outputs.status == 'no-results'
-        run: echo "Secret scan produced no results - proceeding with caution"
-
-      - name: Secret scan failed
-        if: always() && steps.check-results.outputs.status == 'secrets-found'
+      - name: Secret scan summary - Secrets Found
+        if: steps.trufflehog.outputs.secrets-found == 'true'
         run: |
-          echo "SECRETS DETECTED!"
+          echo "VERIFIED SECRETS DETECTED!"
+          echo ""
           echo "Pipeline blocked to prevent credential exposure."
-          echo "Please remove secrets and use GitHub Secrets or Azure Key Vault instead."
+          echo "Detected secrets:"
+          cat trufflehog-results.json | jq -r '.DetectorName + ": " + .Raw[:50] + "..."' || cat trufflehog-results.json
+          echo ""
+          echo "Action required:"
+          echo "1. Remove the secrets from your code"
+          echo "2. Rotate/revoke the exposed credentials immediately"
+          echo "3. Use GitHub Secrets or Azure Key Vault for sensitive data"
           exit 1
 
   # PR Validation - Always includes linting
