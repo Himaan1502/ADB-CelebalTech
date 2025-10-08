@@ -1,21 +1,13 @@
 name: CI/CD - UAT Environment
 on:
-  # Only triggered by dev workflow or manual dispatch
+  push:
+    branches:
+      - uat
+  pull_request:
+    branches:
+      - uat
   workflow_dispatch:
     inputs:
-      triggered_by_dev:
-        description: 'Triggered automatically by dev deployment'
-        required: false
-        type: boolean
-        default: false
-      dev_run_id:
-        description: 'Dev workflow run ID that triggered this'
-        required: false
-        type: string
-      dev_sha:
-        description: 'Commit SHA from dev that triggered this'
-        required: false
-        type: string
       skip-linting:
         description: 'Skip linting checks (always true for UAT)'
         required: false
@@ -27,37 +19,13 @@ permissions:
   contents: read    # Required to checkout code
 
 jobs:
-  # Display deployment context
-  deployment-info:
-    name: Deployment Information
-    runs-on: ubuntu-latest
-    steps:
-      - name: Show deployment details
-        run: |
-          echo "================================================"
-          echo "UAT Deployment Information"
-          echo "================================================"
-          if [ "${{ github.event.inputs.triggered_by_dev }}" == "true" ]; then
-            echo "🔗 Triggered by: DEV deployment"
-            echo "📋 Dev Run ID: ${{ github.event.inputs.dev_run_id }}"
-            echo "🔖 Dev SHA: ${{ github.event.inputs.dev_sha }}"
-            echo "✅ Secret scanning: Already completed in DEV"
-          else
-            echo "👤 Triggered by: Manual workflow dispatch"
-            echo "⚠️  Note: Manual UAT deployments bypass dev validation"
-          fi
-          echo "🎯 Target Environment: UAT"
-          echo "🔧 Linting: Skipped (validated in DEV)"
-          echo "================================================"
-
   # PR Validation - For PRs to UAT branch (optional, if you allow PRs to UAT)
   validate:
-    needs: [deployment-info]
-    if: github.event_name == 'pull_request'
+    # if: github.event_name == 'pull_request'
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
       environment: uat
-      skip-linting: false  # Run linting for PRs to UAT
+      skip-linting: true  # Run linting for PRs to UAT
     secrets:
       client-id: ${{ secrets.AZURE_CLIENT_ID }}
       tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -65,8 +33,7 @@ jobs:
 
   # UAT Deployment - NO Linting, NO Secret Scanning
   deploy-uat:
-    needs: [deployment-info]
-    if: github.event_name == 'workflow_dispatch'
+    # if: github.event_name == 'workflow_dispatch'
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
       environment: uat
@@ -75,27 +42,3 @@ jobs:
       client-id: ${{ secrets.AZURE_CLIENT_ID }}
       tenant-id: ${{ secrets.AZURE_TENANT_ID }}
       subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-  # Deployment summary
-  deployment-summary:
-    needs: [deploy-uat]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deployment summary
-        run: |
-          echo "================================================"
-          echo "UAT Deployment Summary"
-          echo "================================================"
-          if [ "${{ needs.deploy-uat.result }}" == "success" ]; then
-            echo "✅ UAT deployment completed successfully"
-            if [ "${{ github.event.inputs.triggered_by_dev }}" == "true" ]; then
-              echo "🔗 Promoted from DEV run: ${{ github.event.inputs.dev_run_id }}"
-            fi
-          elif [ "${{ needs.deploy-uat.result }}" == "failure" ]; then
-            echo "❌ UAT deployment failed"
-            echo "Please check the logs and retry"
-          else
-            echo "⚠️  UAT deployment was skipped or cancelled"
-          fi
-          echo "================================================"
