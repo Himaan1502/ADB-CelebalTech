@@ -21,7 +21,7 @@ permissions:
 jobs:
   # PR Validation - For PRs to UAT branch (optional, if you allow PRs to UAT)
   validate:
-    # if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request'
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
       environment: uat
