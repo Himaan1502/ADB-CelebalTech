@@ -1,4 +1,4 @@
-name: CI/CD - UAT Environment
+name: Deploy to UAT
 on:
   push:
     branches:
