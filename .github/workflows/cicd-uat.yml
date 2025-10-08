@@ -1,43 +1,22 @@
-name: CI/CD - UAT Environment
+name: Deploy to UAT
+
 on:
   push:
     branches:
       - uat
-  pull_request:
-    branches:
-      - uat
   workflow_dispatch:
-    inputs:
-      skip-linting:
-        description: 'Skip linting checks (always true for UAT)'
-        required: false
-        type: boolean
-        default: true
 
 permissions:
-  id-token: write   # Required for OIDC authentication
-  contents: read    # Required to checkout code
+  id-token: write
+  contents: read
 
 jobs:
-  # PR Validation - For PRs to UAT branch (optional, if you allow PRs to UAT)
-  validate:
-    if: github.event_name == 'pull_request'
-    uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
-    with:
-      environment: uat
-      skip-linting: true  # Run linting for PRs to UAT
-    secrets:
-      client-id: ${{ secrets.AZURE_CLIENT_ID }}
-      tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-      subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-  # UAT Deployment - NO Linting, NO Secret Scanning
   deploy-uat:
-    # if: github.event_name == 'workflow_dispatch'
+    name: Deploy to UAT Environment
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
       environment: uat
-      skip-linting: true  # Always skip linting for UAT - code already validated in dev
+      skip-linting: true  # Already validated in dev
     secrets:
       client-id: ${{ secrets.AZURE_CLIENT_ID }}
       tenant-id: ${{ secrets.AZURE_TENANT_ID }}
