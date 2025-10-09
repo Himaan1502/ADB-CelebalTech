@@ -37,7 +37,7 @@ jobs:
     # if: github.event_name == 'workflow_dispatch'
     uses: Himaan1502/ADB-Template/.github/workflows/reusable-ci-cd.yml@main
     with:
-      # environment: uat
+      environment: uat
       skip-linting: true  # Already validated in dev
     secrets:
       client-id: ${{ secrets.AZURE_CLIENT_ID }}
