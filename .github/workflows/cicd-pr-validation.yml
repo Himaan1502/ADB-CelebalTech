@@ -1,0 +1,240 @@
+name: PR Validation (Feature → Dev)
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types: [opened, synchronize, reopened]
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  # STEP 1: Secret Detection
+  secret-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Determine base commit
+        id: base-commit
+        run: |
+          echo "base=${{ github.event.pull_request.base.sha }}" >> $GITHUB_OUTPUT
+          echo "head=${{ github.sha }}" >> $GITHUB_OUTPUT
+          
+      - name: Run TruffleHog Secret Detection
+        continue-on-error: true
+        id: trufflehog
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+          
+          trufflehog git file://. \
+            --since-commit=${{ steps.base-commit.outputs.base }} \
+            --branch=${{ github.head_ref }} \
+            --only-verified \
+            --json \
+            --no-update > trufflehog-results.json || true
+          
+          if [ -s trufflehog-results.json ]; then
+            echo "secrets-found=true" >> $GITHUB_OUTPUT
+            echo "❌ Secrets detected!"
+          else
+            echo "secrets-found=false" >> $GITHUB_OUTPUT
+            echo "✅ No secrets detected"
+          fi
+          
+      - name: Convert JSON to SARIF
+        if: always() && hashFiles('trufflehog-results.json') != ''
+        run: |
+          if [ -s trufflehog-results.json ]; then
+            trufflehog convert --input trufflehog-results.json --format sarif --output trufflehog-results.sarif || true
+          fi
+          
+      - name: Upload SARIF to GitHub Security
+        if: always() && hashFiles('trufflehog-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trufflehog-results.sarif
+          category: trufflehog-pr
+          
+      - name: Upload TruffleHog Report
+        if: always() && hashFiles('trufflehog-results.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: trufflehog-report-pr
+          path: trufflehog-results.json
+          
+      - name: Fail if secrets found
+        if: steps.trufflehog.outputs.secrets-found == 'true'
+        run: |
+          echo "🚨 VERIFIED SECRETS DETECTED!"
+          echo ""
+          echo "PR blocked to prevent credential exposure."
+          echo ""
+          echo "Action required:"
+          echo "1. Remove the secrets from your code"
+          echo "2. Rotate/revoke the exposed credentials immediately"
+          echo "3. Use GitHub Secrets or Azure Key Vault"
+          echo ""
+          echo "Detected secrets:"
+          cat trufflehog-results.json | jq -r '.DetectorName + ": " + .Raw[:50] + "..."' || cat trufflehog-results.json
+          exit 1
+
+  # STEP 2: Code Linting
+  lint:
+    name: Code Quality Checks
+    needs: [secret-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          path: working-repo
+          
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+            
+      - name: Install linting dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install nbqa==1.7.1 black==23.3.0 flake8==6.0.0
+          
+      - name: Run Black formatting check
+        id: black-check
+        working-directory: ./working-repo
+        run: |
+          echo "Running Black formatting check..."
+          nbqa black src/ \
+            --line-length=120 \
+            --target-version=py310 \
+            --check \
+            --diff
+        continue-on-error: true
+        
+      - name: Run Flake8 linting
+        id: flake8-check
+        working-directory: ./working-repo
+        run: |
+          echo "Running Flake8 linting..."
+          nbqa flake8 src/ \
+            --max-line-length=120 \
+            --ignore=F403,F405,E203,W503 \
+            --extend-ignore=E501,F821,E231,E241,E202,E402
+        continue-on-error: true
+        
+      - name: Check linting results
+        if: ${{ steps.black-check.outcome == 'failure' || steps.flake8-check.outcome == 'failure' }}
+        run: |
+          echo "❌ Linting checks failed!"
+          if [ "${{ steps.black-check.outcome }}" == "failure" ]; then
+            echo "  - Black formatting issues detected"
+          fi
+          if [ "${{ steps.flake8-check.outcome }}" == "failure" ]; then
+            echo "  - Flake8 linting issues detected"
+          fi
+          exit 1
+          
+      - name: Linting passed
+        if: steps.black-check.outcome == 'success' && steps.flake8-check.outcome == 'success'
+        run: echo "✅ All linting checks passed!"
+
+  # STEP 3: Bundle Validation (Optional but recommended)
+  validate:
+    name: Validate Databricks Bundle
+    needs: [secret-scan, lint]
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Checkout Working Repo
+        uses: actions/checkout@v4
+        with:
+          path: working-repo
+          
+      - name: Checkout Template Repo
+        uses: actions/checkout@v4
+        with:
+          repository: Himaan1502/ADB-Template
+          path: template-repo
+          ref: main
+          
+      - name: Azure OIDC Login
+        uses: ./template-repo/actions/login
+        with:
+          environment: dev
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+      - name: Validate Bundle
+        uses: ./template-repo/actions/validate
+        with:
+          target: dev
+        env:
+          WORKING_REPO_PATH: ./working-repo
+
+  # STEP 4: PR Status Comment
+  pr-comment:
+    name: Post PR Comment
+    needs: [secret-scan, lint, validate]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Create PR Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const secretScan = '${{ needs.secret-scan.result }}';
+            const lint = '${{ needs.lint.result }}';
+            const validate = '${{ needs.validate.result }}';
+            
+            let status = '✅ All checks passed!';
+            let details = '';
+            
+            if (secretScan !== 'success') {
+              status = '❌ PR validation failed';
+              details += '- 🚨 Secret detection: FAILED\n';
+            } else {
+              details += '- ✅ Secret detection: passed\n';
+            }
+            
+            if (lint !== 'success') {
+              status = '❌ PR validation failed';
+              details += '- ❌ Code linting: FAILED\n';
+            } else {
+              details += '- ✅ Code linting: passed\n';
+            }
+            
+            if (validate !== 'success') {
+              status = '❌ PR validation failed';
+              details += '- ❌ Bundle validation: FAILED\n';
+            } else {
+              details += '- ✅ Bundle validation: passed\n';
+            }
+            
+            const comment = `## PR Validation Results\n\n${status}\n\n### Checks:\n${details}\n\n*Automated by GitHub Actions*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
