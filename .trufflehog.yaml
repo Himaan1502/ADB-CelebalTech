@@ -76,11 +76,11 @@ allow:
     - "FIXME"
 
 # Verification settings
-verify: true  # Verify that found secrets are actually valid
+verify: false  # Verify that found secrets are actually valid
 
 # Output format
 # json, yaml, or text
 output-format: text
 
 # Only fail on verified secrets (reduces false positives)
-only-verified: true
+# only-verified: true
