@@ -1,0 +1,99 @@
+resources:
+  jobs:
+    test_data_pipeline:
+      name: "[${var.env_name}] Test Data Pipeline"
+      
+      # Email notifications using variables
+      email_notifications:
+        on_success:
+          - ${var.notification_email}
+        on_failure:
+          - ${var.notification_email}
+        no_alert_for_skipped_runs: false
+      
+      # Schedule (runs daily at 2 AM)
+      schedule:
+        quartz_cron_expression: "0 0 2 * * ?"
+        timezone_id: "UTC"
+        pause_status: "PAUSED"
+      
+      # Job cluster configuration using variables
+      job_clusters:
+        - job_cluster_key: "main_cluster"
+          new_cluster:
+            spark_version: "13.3.x-scala2.12"
+            node_type_id: ${var.job_cluster_size}
+            num_workers: ${var.max_workers}
+            spark_conf:
+              "spark.databricks.delta.preview.enabled": "true"
+              "spark.sql.adaptive.enabled": "true"
+            custom_tags:
+              Environment: ${var.env_name}
+              Project: "ADBCelebalTech"
+      
+      # Job tasks
+      tasks:
+        # Task 1: Data Ingestion
+        - task_key: "ingest_data"
+          job_cluster_key: "main_cluster"
+          
+          notebook_task:
+            notebook_path: "./src/notebooks/test_variables.py"
+            source: WORKSPACE
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              schema_name: ${var.schema_name}
+              storage_account: ${var.storage_account}
+              container_name: ${var.container_name}
+              env_name: ${var.env_name}
+          
+          timeout_seconds: 3600
+          max_retries: 2
+          min_retry_interval_millis: 60000
+        
+        # Task 2: Data Transformation (depends on Task 1)
+        - task_key: "transform_data"
+          depends_on:
+            - task_key: "ingest_data"
+          
+          job_cluster_key: "main_cluster"
+          
+          spark_python_task:
+            python_file: "./src/scripts/transform_data.py"
+            parameters:
+              - "--catalog"
+              - ${var.catalog_name}
+              - "--schema"
+              - ${var.schema_name}
+              - "--env"
+              - ${var.env_name}
+          
+          timeout_seconds: 3600
+          max_retries: 2
+        
+        # Task 3: Data Quality Checks
+        - task_key: "quality_check"
+          depends_on:
+            - task_key: "transform_data"
+          
+          job_cluster_key: "main_cluster"
+          
+          notebook_task:
+            notebook_path: "./src/notebooks/quality_check.py"
+            source: WORKSPACE
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              schema_name: ${var.schema_name}
+              env_name: ${var.env_name}
+              alert_email: ${var.notification_email}
+          
+          timeout_seconds: 1800
+      
+      # Overall job settings
+      max_concurrent_runs: 1
+      timeout_seconds: 7200
+      
+      tags:
+        environment: ${var.env_name}
+        owner: "data-engineering"
+        project: "celebal-tech"
