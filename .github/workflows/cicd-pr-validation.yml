@@ -38,7 +38,7 @@ jobs:
           trufflehog git file://. \
             --since-commit=${{ steps.base-commit.outputs.base }} \
             --branch=${{ github.head_ref }} \
-            --only-verified \
+            # --only-verified \
             --json \
             --no-update > trufflehog-results.json || true
           
