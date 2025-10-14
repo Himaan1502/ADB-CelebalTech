@@ -20,6 +20,11 @@ jobs:
   secret-scan:
     name: Secret Detection
     runs-on: ubuntu-latest
+    outputs:
+      secrets-found: ${{ steps.trufflehog.outputs.secrets-found }}
+      total: ${{ steps.trufflehog.outputs.total }}
+      verified: ${{ steps.trufflehog.outputs.verified }}
+      unverified: ${{ steps.trufflehog.outputs.unverified }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -302,7 +307,7 @@ jobs:
           (steps.black-check.outcome == 'success' && steps.isort-check.outcome == 'success' && steps.flake8-check.outcome == 'success')
         run: echo "✅ All code quality checks passed!"
 
-  # STEP 4: Bundle Validation
+  # STEP 3: Bundle Validation
   validate:
     name: Validate Databricks Bundle
     needs: [secret-scan, lint]
@@ -320,7 +325,7 @@ jobs:
           repository: Himaan1502/ADB-Template
           path: template-repo
           ref: main
-          token: ${{ secrets.TEMPLATE_REPO_PAT }}  # Required for private repos
+          token: ${{ secrets.TEMPLATE_REPO_PAT }}
           
       - name: Check Template Repo Structure
         run: |
@@ -367,10 +372,10 @@ jobs:
             working-repo/databricks.yml
           retention-days: 30
 
-  # STEP 5: PR Status Comment
+  # STEP 4: PR Status Comment
   pr-comment:
     name: Post PR Status
-    needs: [secret-scan, dependency-scan, lint, validate]
+    needs: [secret-scan, lint, validate]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -381,7 +386,6 @@ jobs:
         with:
           script: |
             const secretScan = '${{ needs.secret-scan.result }}';
-            const depScan = '${{ needs.dependency-scan.result }}';
             const lint = '${{ needs.lint.result }}';
             const validate = '${{ needs.validate.result }}';
             
@@ -411,16 +415,6 @@ jobs:
               }
             } else {
               details += '* ✅ Secret detection: passed\n';
-            }
-            
-            // Dependency Scan
-            if (depScan !== 'success' && depScan !== 'skipped') {
-              hasFailures = true;
-              emoji = emoji === '✅' ? '⚠️' : emoji;
-              status = status === 'All checks passed!' ? 'PR validation failed' : status;
-              details += '* ⚠️ Dependency security: FAILED\n';
-            } else if (depScan === 'success') {
-              details += '* ✅ Dependency security: passed\n';
             }
             
             // Code Linting
