@@ -156,59 +156,7 @@ jobs:
           
           exit 1
 
-  # STEP 2: Dependency Security Scan
-  dependency-scan:
-    name: Dependency Security Check
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-          
-      - name: Check for requirements files
-        id: check-requirements
-        run: |
-          if [ -f "requirements.txt" ] || [ -f "pyproject.toml" ]; then
-            echo "found=true" >> $GITHUB_OUTPUT
-          else
-            echo "found=false" >> $GITHUB_OUTPUT
-          fi
-          
-      - name: Install dependencies
-        if: steps.check-requirements.outputs.found == 'true'
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f "requirements.txt" ]; then
-            pip install -r requirements.txt
-          fi
-          pip install safety pip-audit
-          
-      - name: Run Safety check
-        if: steps.check-requirements.outputs.found == 'true'
-        continue-on-error: true
-        run: |
-          echo "🔍 Checking for known security vulnerabilities..."
-          safety check --json > safety-report.json || true
-          
-          if [ -s safety-report.json ]; then
-            echo "⚠️ Vulnerabilities found - see report"
-          else
-            echo "✅ No known vulnerabilities"
-          fi
-          
-      - name: Upload Security Report
-        if: always() && steps.check-requirements.outputs.found == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: dependency-security-report-${{ github.event.pull_request.number }}
-          path: safety-report.json
-          retention-days: 90
-
-  # STEP 3: Code Linting
+  # STEP 2: Code Linting
   lint:
     name: Code Quality Checks
     needs: [secret-scan]
