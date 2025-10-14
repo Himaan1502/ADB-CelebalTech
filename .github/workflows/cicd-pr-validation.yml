@@ -275,40 +275,65 @@ jobs:
         
       - name: Auto-fix formatting issues
         if: (steps.black-check.outcome == 'failure' || steps.isort-check.outcome == 'failure') && steps.find-files.outputs.python-files > 0
+        continue-on-error: true
+        id: auto-fix
         run: |
           echo "🔧 Auto-fixing formatting issues..."
+          
+          AUTO_FIX_SUCCESS=true
           
           # Run Black to fix formatting
           if [ "${{ steps.black-check.outcome }}" == "failure" ]; then
             echo "  🎨 Applying Black formatting..."
-            black . \
+            if black . \
               --line-length=120 \
               --target-version=py310 \
-              --exclude='/(\.git|\.venv|venv|__pycache__|\.pytest_cache|\.databricks)/'
+              --exclude='/(\.git|\.venv|venv|__pycache__|\.pytest_cache|\.databricks)/'; then
+              echo "  ✅ Black formatting applied successfully"
+            else
+              echo "  ⚠️  Black formatting failed on some files (possibly Python 2 syntax or parse errors)"
+              AUTO_FIX_SUCCESS=false
+            fi
             
             # Fix notebooks
             if [ "${{ steps.find-files.outputs.notebook-files }}" -gt "0" ]; then
-              nbqa black . \
+              if nbqa black . \
                 --line-length=120 \
                 --target-version=py310 \
-                --nbqa-exclude='/(\.git|\.venv|venv|__pycache__)/'
+                --nbqa-exclude='/(\.git|\.venv|venv|__pycache__)/'; then
+                echo "  ✅ Notebook formatting applied successfully"
+              else
+                echo "  ⚠️  Notebook formatting failed on some files"
+                AUTO_FIX_SUCCESS=false
+              fi
             fi
           fi
           
           # Run isort to fix imports
           if [ "${{ steps.isort-check.outcome }}" == "failure" ]; then
             echo "  📦 Applying isort import sorting..."
-            isort . \
+            if isort . \
               --profile=black \
               --line-length=120 \
-              --skip-gitignore
+              --skip-gitignore; then
+              echo "  ✅ Import sorting applied successfully"
+            else
+              echo "  ⚠️  Import sorting failed on some files"
+              AUTO_FIX_SUCCESS=false
+            fi
           fi
           
-          echo "✅ Auto-fix complete!"
+          if [ "$AUTO_FIX_SUCCESS" = true ]; then
+            echo "✅ Auto-fix complete!"
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️  Auto-fix completed with some errors"
+            echo "success=false" >> $GITHUB_OUTPUT
+          fi
           
       - name: Check for changes
         id: git-check
-        if: steps.black-check.outcome == 'failure' || steps.isort-check.outcome == 'failure'
+        if: steps.auto-fix.outcome != 'skipped'
         run: |
           git diff --quiet || echo "changes=true" >> $GITHUB_OUTPUT
           
@@ -324,15 +349,27 @@ jobs:
           - Black formatter (line-length=120)
           - isort import sorting (profile=black)
           
+          Note: Files with parse errors were skipped
+          
           [skip ci]"
           git push
           
       - name: Check linting results
-        if: steps.flake8-check.outcome == 'failure'
+        if: steps.flake8-check.outcome == 'failure' || steps.auto-fix.outputs.success == 'false'
         run: |
           echo ""
           echo "❌ Code Quality Issues Detected"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          
+          if [ "${{ steps.auto-fix.outputs.success }}" == "false" ]; then
+            echo "  ⚠️  Auto-fix: Some files could not be formatted"
+            echo "     Common causes:"
+            echo "     - Python 2 syntax (not supported)"
+            echo "     - Syntax errors in Python files"
+            echo "     - Invalid Python code"
+            echo "     Action: Fix these files manually"
+            echo ""
+          fi
           
           if [ "${{ steps.flake8-check.outcome }}" == "failure" ]; then
             echo "  🔍 Flake8: Code style violations found"
@@ -341,8 +378,10 @@ jobs:
           fi
           
           echo ""
-          echo "⚠️  Black and isort issues have been auto-fixed and committed."
-          echo "    Please review the automated commit and fix Flake8 issues manually."
+          if [ "${{ steps.git-check.outputs.changes }}" == "true" ]; then
+            echo "✅ Fixable issues have been auto-corrected and committed."
+          fi
+          echo "⚠️  Please fix remaining issues manually and push again."
           echo ""
           exit 1
           
@@ -375,7 +414,6 @@ jobs:
           repository: Himaan1502/ADB-Template
           path: template-repo
           ref: main
-          token: ${{ secrets.TEMPLATE_REPO_PAT }}
           
       - name: Check Template Repo Structure
         run: |
