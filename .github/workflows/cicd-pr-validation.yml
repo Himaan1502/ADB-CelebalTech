@@ -9,6 +9,7 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
+  id-token: write
   contents: read
   pull-requests: write
   security-events: write
@@ -36,16 +37,25 @@ jobs:
         run: |
           set -e
           
+          # Install TruffleHog
           curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
           
           echo "🔍 Starting TruffleHog secret scan..."
+          echo "Base commit: ${{ steps.base-commit.outputs.base }}"
+          echo "Head commit: ${{ steps.base-commit.outputs.head }}"
           
+          # Run TruffleHog (single line to avoid shell issues)
           trufflehog git file://. --since-commit=${{ steps.base-commit.outputs.base }} --branch=${{ github.head_ref }} --json --no-update > trufflehog-results.json || true
           
+          # Parse results
           if [ -s trufflehog-results.json ]; then
-            TOTAL_SECRETS=$(jq '. | length' trufflehog-results.json 2>/dev/null || echo "0")
-            VERIFIED_SECRETS=$(jq '[.[] | select(.Verified==true)] | length' trufflehog-results.json 2>/dev/null || echo "0")
-            UNVERIFIED_SECRETS=$(jq '[.[] | select(.Verified==false)] | length' trufflehog-results.json 2>/dev/null || echo "0")
+            # TruffleHog outputs newline-delimited JSON (NDJSON), not a JSON array
+            # We need to wrap it in an array for jq to parse
+            cat trufflehog-results.json | jq -s '.' > trufflehog-results-array.json
+            
+            TOTAL_SECRETS=$(jq 'length' trufflehog-results-array.json 2>/dev/null || echo "0")
+            VERIFIED_SECRETS=$(jq '[.[] | select(.Verified==true)] | length' trufflehog-results-array.json 2>/dev/null || echo "0")
+            UNVERIFIED_SECRETS=$(jq '[.[] | select(.Verified==false)] | length' trufflehog-results-array.json 2>/dev/null || echo "0")
             
             echo "secrets-found=true" >> $GITHUB_OUTPUT
             echo "total=$TOTAL_SECRETS" >> $GITHUB_OUTPUT
@@ -53,7 +63,12 @@ jobs:
             echo "unverified=$UNVERIFIED_SECRETS" >> $GITHUB_OUTPUT
             
             echo ""
-            echo "❌ SECRETS DETECTED: Total=$TOTAL_SECRETS (Verified=$VERIFIED_SECRETS, Unverified=$UNVERIFIED_SECRETS)"
+            echo "❌ SECRET DETECTION RESULTS:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "Total secrets found: $TOTAL_SECRETS"
+            echo "  ├─ Verified (active): $VERIFIED_SECRETS"
+            echo "  └─ Unverified: $UNVERIFIED_SECRETS"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           else
             echo "secrets-found=false" >> $GITHUB_OUTPUT
             echo "total=0" >> $GITHUB_OUTPUT
@@ -65,24 +80,35 @@ jobs:
       - name: Display Secret Details
         if: always() && steps.trufflehog.outputs.secrets-found == 'true'
         run: |
+          echo ""
           echo "📋 Detailed Findings:"
-          jq -r '.[] | "🔴 \(.DetectorType) in \(.SourceMetadata.Data.Git.file // "unknown"):\(.SourceMetadata.Data.Git.line // "?") [Verified: \(if .Verified then "YES" else "No" end)]"' trufflehog-results.json || cat trufflehog-results.json
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           
-      - name: Convert to SARIF
+          jq -rs '.[] | "
+          🔴 \(.DetectorType) Secret Detected
+             File: \(.SourceMetadata.Data.Git.file // "unknown")
+             Line: \(.SourceMetadata.Data.Git.line // "?")
+             Commit: \(.SourceMetadata.Data.Git.commit // "unknown")[0:8]
+             Verified: \(if .Verified then "✓ YES (CRITICAL)" else "✗ No" end)
+             Preview: \(.Raw[:50])...
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          "' trufflehog-results.json || cat trufflehog-results.json
+          
+      - name: Convert JSON to SARIF
         if: always() && hashFiles('trufflehog-results.json') != ''
         run: |
           if [ -s trufflehog-results.json ]; then
             trufflehog convert --input trufflehog-results.json --format sarif --output trufflehog-results.sarif || true
           fi
           
-      - name: Upload SARIF
+      - name: Upload SARIF to GitHub Security
         if: always() && hashFiles('trufflehog-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trufflehog-results.sarif
           category: trufflehog-pr
           
-      - name: Upload Report
+      - name: Upload TruffleHog Report
         if: always() && hashFiles('trufflehog-results.json') != ''
         uses: actions/upload-artifact@v4
         with:
@@ -93,17 +119,96 @@ jobs:
       - name: Fail if secrets found
         if: steps.trufflehog.outputs.secrets-found == 'true'
         run: |
-          echo "🚨 SECURITY VIOLATION - Secrets detected!"
           echo ""
-          echo "Summary: ${{ steps.trufflehog.outputs.total }} secrets (${{ steps.trufflehog.outputs.verified }} verified)"
+          echo "🚨 SECURITY POLICY VIOLATION"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Secrets detected in pull request!"
           echo ""
-          echo "Required Actions:"
-          echo "1. Remove all secrets from code"
-          echo "2. Use Databricks Secret Scopes: dbutils.secrets.get(scope='scope', key='key')"
-          echo "3. Rotate any verified credentials immediately"
+          echo "📊 Summary:"
+          echo "  • Total secrets: ${{ steps.trufflehog.outputs.total }}"
+          echo "  • Verified (CRITICAL): ${{ steps.trufflehog.outputs.verified }}"
+          echo "  • Unverified: ${{ steps.trufflehog.outputs.unverified }}"
+          echo ""
+          
+          if [ "${{ steps.trufflehog.outputs.verified }}" -gt "0" ]; then
+            echo "🔥 CRITICAL - Active credentials detected!"
+            echo "   ⚠️  IMMEDIATE ACTION REQUIRED:"
+            echo "   1. Rotate/revoke these credentials NOW"
+            echo "   2. Check Azure/Databricks access logs for unauthorized usage"
+            echo "   3. File security incident report with security team"
+            echo ""
+          fi
+          
+          echo "📝 Required Actions:"
+          echo "   1. Remove ALL secrets from your code"
+          echo "   2. Use proper secret management:"
+          echo "      • Databricks: dbutils.secrets.get(scope='scope', key='key')"
+          echo "      • GitHub Actions: \${{ secrets.SECRET_NAME }}"
+          echo "      • Azure: Use Key Vault references"
+          echo "   3. Never commit secrets to Git (even in branches)"
+          echo "   4. Review Git history - secrets persist after removal"
+          echo ""
+          echo "📚 Documentation:"
+          echo "   • Databricks Secrets: https://docs.databricks.com/security/secrets/"
+          echo "   • Azure Key Vault: https://learn.microsoft.com/azure/key-vault/"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          
           exit 1
 
-  # STEP 2: Code Quality
+  # STEP 2: Dependency Security Scan
+  dependency-scan:
+    name: Dependency Security Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Check for requirements files
+        id: check-requirements
+        run: |
+          if [ -f "requirements.txt" ] || [ -f "pyproject.toml" ]; then
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Install dependencies
+        if: steps.check-requirements.outputs.found == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+          fi
+          pip install safety pip-audit
+          
+      - name: Run Safety check
+        if: steps.check-requirements.outputs.found == 'true'
+        continue-on-error: true
+        run: |
+          echo "🔍 Checking for known security vulnerabilities..."
+          safety check --json > safety-report.json || true
+          
+          if [ -s safety-report.json ]; then
+            echo "⚠️ Vulnerabilities found - see report"
+          else
+            echo "✅ No known vulnerabilities"
+          fi
+          
+      - name: Upload Security Report
+        if: always() && steps.check-requirements.outputs.found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-security-report-${{ github.event.pull_request.number }}
+          path: safety-report.json
+          retention-days: 90
+
+  # STEP 3: Code Linting
   lint:
     name: Code Quality Checks
     needs: [secret-scan]
@@ -117,7 +222,15 @@ jobs:
         with:
           python-version: '3.10'
           
-      - name: Install linting tools
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-lint-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-lint-
+            
+      - name: Install linting dependencies
         run: |
           python -m pip install --upgrade pip
           pip install nbqa==1.7.1 black==23.3.0 flake8==6.0.0 isort==5.12.0
@@ -125,114 +238,191 @@ jobs:
       - name: Find Python files
         id: find-files
         run: |
+          # Find all Python files and notebooks
           PYTHON_FILES=$(find . -type f -name "*.py" ! -path "./.git/*" ! -path "./.venv/*" ! -path "./venv/*" | wc -l)
-          NOTEBOOK_FILES=$(find . -type f -name "*.ipynb" ! -path "./.git/*" | wc -l)
+          NOTEBOOK_FILES=$(find . -type f -name "*.ipynb" ! -path "./.git/*" ! -path "./.venv/*" | wc -l)
           
           echo "python-files=$PYTHON_FILES" >> $GITHUB_OUTPUT
           echo "notebook-files=$NOTEBOOK_FILES" >> $GITHUB_OUTPUT
-          echo "Found: $PYTHON_FILES Python files, $NOTEBOOK_FILES notebooks"
           
-      - name: Run Black
+          echo "📊 Files found:"
+          echo "  • Python files: $PYTHON_FILES"
+          echo "  • Notebooks: $NOTEBOOK_FILES"
+          
+      - name: Run Black formatting check
         id: black-check
         if: steps.find-files.outputs.python-files > 0 || steps.find-files.outputs.notebook-files > 0
         continue-on-error: true
         run: |
-          echo "🎨 Checking code formatting..."
-          black . --line-length=120 --check --diff --exclude='/(\.git|\.venv|venv|__pycache__)/'
+          echo "🎨 Running Black formatter check..."
           
-      - name: Run isort
+          # Check Python files
+          if [ "${{ steps.find-files.outputs.python-files }}" -gt "0" ]; then
+            black . \
+              --line-length=120 \
+              --target-version=py310 \
+              --exclude='/(\.git|\.venv|venv|__pycache__|\.pytest_cache|\.databricks)/' \
+              --check \
+              --diff
+          fi
+          
+          # Check notebooks
+          if [ "${{ steps.find-files.outputs.notebook-files }}" -gt "0" ]; then
+            nbqa black . \
+              --line-length=120 \
+              --target-version=py310 \
+              --nbqa-exclude='/(\.git|\.venv|venv|__pycache__)/' \
+              --check \
+              --diff
+          fi
+        
+      - name: Run isort import sorting check
         id: isort-check
-        if: steps.find-files.outputs.python-files > 0
+        if: steps.find-files.outputs.python-files > 0 || steps.find-files.outputs.notebook-files > 0
         continue-on-error: true
         run: |
-          echo "📦 Checking import sorting..."
-          isort . --profile=black --line-length=120 --skip-gitignore --check-only --diff
+          echo "📦 Running isort import checker..."
           
-      - name: Run Flake8
+          # Check Python files
+          if [ "${{ steps.find-files.outputs.python-files }}" -gt "0" ]; then
+            isort . \
+              --profile=black \
+              --line-length=120 \
+              --skip-gitignore \
+              --check-only \
+              --diff
+          fi
+          
+      - name: Run Flake8 linting
         id: flake8-check
         if: steps.find-files.outputs.python-files > 0 || steps.find-files.outputs.notebook-files > 0
         continue-on-error: true
         run: |
-          echo "🔍 Running linter..."
-          flake8 . --max-line-length=120 --ignore=F403,F405,E203,W503 --extend-ignore=E501,F821,E231,E241,E202,E402 --exclude=.git,.venv,venv,__pycache__ --count
+          echo "🔍 Running Flake8 linter..."
+          
+          # Check Python files
+          if [ "${{ steps.find-files.outputs.python-files }}" -gt "0" ]; then
+            flake8 . \
+              --max-line-length=120 \
+              --ignore=F403,F405,E203,W503 \
+              --extend-ignore=E501,F821,E231,E241,E202,E402 \
+              --exclude=.git,.venv,venv,__pycache__,.pytest_cache,.databricks \
+              --count \
+              --statistics
+          fi
+          
+          # Check notebooks
+          if [ "${{ steps.find-files.outputs.notebook-files }}" -gt "0" ]; then
+            nbqa flake8 . \
+              --max-line-length=120 \
+              --ignore=F403,F405,E203,W503 \
+              --extend-ignore=E501,F821,E231,E241,E202,E402 \
+              --nbqa-exclude='/(\.git|\.venv|venv)/'
+          fi
         
-      - name: Check results
+      - name: Check linting results
         if: steps.black-check.outcome == 'failure' || steps.isort-check.outcome == 'failure' || steps.flake8-check.outcome == 'failure'
         run: |
-          echo "❌ Code quality issues detected!"
-          [ "${{ steps.black-check.outcome }}" == "failure" ] && echo "  - Black: formatting issues"
-          [ "${{ steps.isort-check.outcome }}" == "failure" ] && echo "  - isort: import sorting issues"
-          [ "${{ steps.flake8-check.outcome }}" == "failure" ] && echo "  - Flake8: style violations"
           echo ""
-          echo "Fix: black . --line-length=120 && isort . --profile=black"
+          echo "❌ Code Quality Issues Detected"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          
+          if [ "${{ steps.black-check.outcome }}" == "failure" ]; then
+            echo "  🎨 Black: Formatting issues found"
+            echo "     Fix: Run 'black . --line-length=120'"
+          fi
+          
+          if [ "${{ steps.isort-check.outcome }}" == "failure" ]; then
+            echo "  📦 isort: Import sorting issues found"
+            echo "     Fix: Run 'isort . --profile=black'"
+          fi
+          
+          if [ "${{ steps.flake8-check.outcome }}" == "failure" ]; then
+            echo "  🔍 Flake8: Code style violations found"
+            echo "     Review the output above for specific issues"
+          fi
+          
+          echo ""
+          echo "💡 Quick fix command:"
+          echo "   black . --line-length=120 && isort . --profile=black"
+          echo ""
           exit 1
+          
+      - name: Linting passed
+        if: |
+          (steps.find-files.outputs.python-files == 0 && steps.find-files.outputs.notebook-files == 0) ||
+          (steps.black-check.outcome == 'success' && steps.isort-check.outcome == 'success' && steps.flake8-check.outcome == 'success')
+        run: echo "✅ All code quality checks passed!"
 
-  # STEP 3: Bundle Configuration Validation (Local Only - No Azure)
-  validate-config:
-    name: Validate Bundle Configuration
+  # STEP 4: Bundle Validation
+  validate:
+    name: Validate Databricks Bundle
     needs: [secret-scan, lint]
     runs-on: ubuntu-latest
+    environment: dev
     steps:
-      - name: Checkout code
+      - name: Checkout Working Repo
         uses: actions/checkout@v4
-        
-      - name: Install Databricks CLI
+        with:
+          path: working-repo
+          
+      - name: Checkout Template Repo
+        uses: actions/checkout@v4
+        with:
+          repository: Himaan1502/ADB-Template
+          path: template-repo
+          ref: main
+          token: ${{ secrets.TEMPLATE_REPO_PAT }}  # Required for private repos
+          
+      - name: Check Template Repo Structure
         run: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-          databricks --version
-        
-      - name: Check Bundle Structure
-        run: |
-          echo "📂 Checking bundle structure..."
+          echo "📂 Template repo structure:"
+          ls -la template-repo/
           
-          # Check for databricks.yml
-          if [ ! -f "databricks.yml" ]; then
-            echo "❌ databricks.yml not found"
-            exit 1
-          fi
-          echo "✅ databricks.yml found"
-          
-          # Check for resources directory
-          if [ -d "resources" ]; then
-            echo "✅ resources/ directory found"
-            RESOURCE_FILES=$(find resources -name "*.yml" -o -name "*.yaml" | wc -l)
-            echo "   Found $RESOURCE_FILES resource files"
-          fi
-          
-          # Display bundle structure
-          echo ""
-          echo "Bundle structure:"
-          tree -L 2 -I 'venv|.venv|__pycache__|.git' || ls -R
-        
-      - name: Validate Bundle Syntax
-        run: |
-          echo "🔍 Validating bundle configuration..."
-          
-          # Validate without connecting to workspace
-          # This checks YAML syntax and structure only
-          databricks bundle validate --target dev 2>&1 | tee validation.log || true
-          
-          # Check if validation succeeded
-          if grep -q "Error" validation.log; then
-            echo "❌ Bundle validation failed - check configuration"
-            cat validation.log
+          if [ -d "template-repo/actions/login" ]; then
+            echo "✅ Login action found"
+          else
+            echo "❌ Login action not found"
             exit 1
           fi
           
-          echo "✅ Bundle configuration is valid"
+          if [ -d "template-repo/actions/validate" ]; then
+            echo "✅ Validate action found"
+          else
+            echo "❌ Validate action not found"
+            exit 1
+          fi
           
-      - name: Upload Validation Log
+      - name: Azure OIDC Login
+        uses: ./template-repo/actions/login
+        with:
+          environment: dev
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+      - name: Validate Bundle
+        id: validate-bundle
+        uses: ./template-repo/actions/validate
+        with:
+          target: dev
+        env:
+          WORKING_REPO_PATH: ./working-repo
+          
+      - name: Upload Validation Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bundle-validation-log-${{ github.event.pull_request.number }}
-          path: validation.log
+          name: bundle-validation-report-${{ github.event.pull_request.number }}
+          path: |
+            working-repo/.databricks/
+            working-repo/databricks.yml
           retention-days: 30
 
-  # STEP 4: PR Status Comment
+  # STEP 5: PR Status Comment
   pr-comment:
     name: Post PR Status
-    needs: [secret-scan, lint, validate-config]
+    needs: [secret-scan, dependency-scan, lint, validate]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -243,12 +433,15 @@ jobs:
         with:
           script: |
             const secretScan = '${{ needs.secret-scan.result }}';
+            const depScan = '${{ needs.dependency-scan.result }}';
             const lint = '${{ needs.lint.result }}';
-            const validate = '${{ needs.validate-config.result }}';
+            const validate = '${{ needs.validate.result }}';
             
+            // Get secret scan details
             const secretsFound = '${{ needs.secret-scan.outputs.secrets-found }}' === 'true';
             const totalSecrets = '${{ needs.secret-scan.outputs.total }}' || '0';
             const verifiedSecrets = '${{ needs.secret-scan.outputs.verified }}' || '0';
+            const unverifiedSecrets = '${{ needs.secret-scan.outputs.unverified }}' || '0';
             
             let emoji = '✅';
             let status = 'All checks passed!';
@@ -264,13 +457,25 @@ jobs:
               status = 'CRITICAL - Security issues detected';
               details += `* 🚨 **Secret detection: FAILED**\n`;
               if (secretsFound) {
-                details += `  * Found ${totalSecrets} secrets (${verifiedSecrets} verified)\n`;
+                details += `  * Total secrets: ${totalSecrets}\n`;
+                details += `  * Verified (active): ${verifiedSecrets}\n`;
+                details += `  * Unverified: ${unverifiedSecrets}\n`;
               }
             } else {
               details += '* ✅ Secret detection: passed\n';
             }
             
-            // Code Quality
+            // Dependency Scan
+            if (depScan !== 'success' && depScan !== 'skipped') {
+              hasFailures = true;
+              emoji = emoji === '✅' ? '⚠️' : emoji;
+              status = status === 'All checks passed!' ? 'PR validation failed' : status;
+              details += '* ⚠️ Dependency security: FAILED\n';
+            } else if (depScan === 'success') {
+              details += '* ✅ Dependency security: passed\n';
+            }
+            
+            // Code Linting
             if (lint !== 'success') {
               hasFailures = true;
               emoji = emoji === '✅' ? '❌' : emoji;
@@ -285,34 +490,49 @@ jobs:
               hasFailures = true;
               emoji = emoji === '✅' ? '❌' : emoji;
               status = status === 'All checks passed!' ? 'PR validation failed' : status;
-              details += '* ❌ Bundle configuration: FAILED\n';
+              details += '* ❌ Bundle validation: FAILED\n';
             } else {
-              details += '* ✅ Bundle configuration: passed\n';
+              details += '* ✅ Bundle validation: passed\n';
             }
             
             // Build comment
-            let comment = `## ${emoji} PR Validation Results\n\n**${status}**\n\n### Checks:\n${details}\n`;
+            let comment = `## ${emoji} PR Validation Results\n\n`;
+            comment += `**${status}**\n\n`;
+            comment += `### Checks:\n${details}\n`;
             
             if (hasFailures) {
               comment += '\n---\n\n';
               if (hasCritical) {
-                comment += '### 🚨 Critical Security Issues\n';
-                comment += '**Secrets detected in code!** This PR cannot be merged.\n\n';
-                comment += '**Required Actions:**\n';
-                comment += '1. Remove all secrets from your code\n';
-                comment += '2. Use Databricks Secret Scopes instead\n';
-                comment += '3. Rotate any exposed credentials\n\n';
+                comment += '### 🚨 Critical Issues\n';
+                comment += 'This PR contains **security violations** and cannot be merged.\n\n';
+                comment += '**Immediate actions required:**\n';
+                comment += '1. Review the secret detection findings above\n';
+                comment += '2. Remove all secrets from code\n';
+                comment += '3. Rotate any exposed credentials\n';
+                comment += '4. Use proper secret management (Databricks Secrets, Azure Key Vault)\n\n';
               } else {
                 comment += '### ⚠️ Action Required\n';
                 comment += 'Please fix the failed checks before merging.\n\n';
               }
+              
+              comment += '**Resources:**\n';
+              comment += '* [Databricks Secrets Guide](https://docs.databricks.com/security/secrets/)\n';
+              comment += '* [Code Style Guide](https://pep8.org/)\n';
+              comment += '* [Azure Key Vault](https://learn.microsoft.com/azure/key-vault/)\n\n';
             }
             
-            comment += '\n---\n*Automated PR validation • No Azure deployment*';
+            comment += '\n---\n';
+            comment += `*Automated by GitHub Actions • [View Run](${context.payload.pull_request.html_url}/checks)*`;
             
+            // Post comment
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: comment
             });
+            
+            // Set check run status
+            if (hasFailures) {
+              core.setFailed(`PR validation failed - see details above`);
+            }
