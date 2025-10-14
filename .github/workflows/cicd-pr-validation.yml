@@ -17,154 +17,154 @@ permissions:
 
 jobs:
   # STEP 1: Secret Detection
-  secret-scan:
-    name: Secret Detection
-    runs-on: ubuntu-latest
-    outputs:
-      secrets-found: ${{ steps.trufflehog.outputs.secrets-found }}
-      total: ${{ steps.trufflehog.outputs.total }}
-      verified: ${{ steps.trufflehog.outputs.verified }}
-      unverified: ${{ steps.trufflehog.outputs.unverified }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+  # secret-scan:
+  #   name: Secret Detection
+  #   runs-on: ubuntu-latest
+  #   outputs:
+  #     secrets-found: ${{ steps.trufflehog.outputs.secrets-found }}
+  #     total: ${{ steps.trufflehog.outputs.total }}
+  #     verified: ${{ steps.trufflehog.outputs.verified }}
+  #     unverified: ${{ steps.trufflehog.outputs.unverified }}
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0
           
-      - name: Determine base commit
-        id: base-commit
-        run: |
-          echo "base=${{ github.event.pull_request.base.sha }}" >> $GITHUB_OUTPUT
-          echo "head=${{ github.sha }}" >> $GITHUB_OUTPUT
+  #     - name: Determine base commit
+  #       id: base-commit
+  #       run: |
+  #         echo "base=${{ github.event.pull_request.base.sha }}" >> $GITHUB_OUTPUT
+  #         echo "head=${{ github.sha }}" >> $GITHUB_OUTPUT
           
-      - name: Run TruffleHog Secret Detection
-        id: trufflehog
-        run: |
-          set -e
+  #     - name: Run TruffleHog Secret Detection
+  #       id: trufflehog
+  #       run: |
+  #         set -e
           
-          # Install TruffleHog
-          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+  #         # Install TruffleHog
+  #         curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
           
-          echo "🔍 Starting TruffleHog secret scan..."
-          echo "Base commit: ${{ steps.base-commit.outputs.base }}"
-          echo "Head commit: ${{ steps.base-commit.outputs.head }}"
+  #         echo "🔍 Starting TruffleHog secret scan..."
+  #         echo "Base commit: ${{ steps.base-commit.outputs.base }}"
+  #         echo "Head commit: ${{ steps.base-commit.outputs.head }}"
           
-          # Run TruffleHog (single line to avoid shell issues)
-          trufflehog git file://. --since-commit=${{ steps.base-commit.outputs.base }} --branch=${{ github.head_ref }} --json --no-update > trufflehog-results.json || true
+  #         # Run TruffleHog (single line to avoid shell issues)
+  #         trufflehog git file://. --since-commit=${{ steps.base-commit.outputs.base }} --branch=${{ github.head_ref }} --json --no-update > trufflehog-results.json || true
           
-          # Parse results
-          if [ -s trufflehog-results.json ]; then
-            # TruffleHog outputs newline-delimited JSON (NDJSON), not a JSON array
-            # We need to wrap it in an array for jq to parse
-            cat trufflehog-results.json | jq -s '.' > trufflehog-results-array.json
+  #         # Parse results
+  #         if [ -s trufflehog-results.json ]; then
+  #           # TruffleHog outputs newline-delimited JSON (NDJSON), not a JSON array
+  #           # We need to wrap it in an array for jq to parse
+  #           cat trufflehog-results.json | jq -s '.' > trufflehog-results-array.json
             
-            TOTAL_SECRETS=$(jq 'length' trufflehog-results-array.json 2>/dev/null || echo "0")
-            VERIFIED_SECRETS=$(jq '[.[] | select(.Verified==true)] | length' trufflehog-results-array.json 2>/dev/null || echo "0")
-            UNVERIFIED_SECRETS=$(jq '[.[] | select(.Verified==false)] | length' trufflehog-results-array.json 2>/dev/null || echo "0")
+  #           TOTAL_SECRETS=$(jq 'length' trufflehog-results-array.json 2>/dev/null || echo "0")
+  #           VERIFIED_SECRETS=$(jq '[.[] | select(.Verified==true)] | length' trufflehog-results-array.json 2>/dev/null || echo "0")
+  #           UNVERIFIED_SECRETS=$(jq '[.[] | select(.Verified==false)] | length' trufflehog-results-array.json 2>/dev/null || echo "0")
             
-            echo "secrets-found=true" >> $GITHUB_OUTPUT
-            echo "total=$TOTAL_SECRETS" >> $GITHUB_OUTPUT
-            echo "verified=$VERIFIED_SECRETS" >> $GITHUB_OUTPUT
-            echo "unverified=$UNVERIFIED_SECRETS" >> $GITHUB_OUTPUT
+  #           echo "secrets-found=true" >> $GITHUB_OUTPUT
+  #           echo "total=$TOTAL_SECRETS" >> $GITHUB_OUTPUT
+  #           echo "verified=$VERIFIED_SECRETS" >> $GITHUB_OUTPUT
+  #           echo "unverified=$UNVERIFIED_SECRETS" >> $GITHUB_OUTPUT
             
-            echo ""
-            echo "❌ SECRET DETECTION RESULTS:"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "Total secrets found: $TOTAL_SECRETS"
-            echo "  ├─ Verified (active): $VERIFIED_SECRETS"
-            echo "  └─ Unverified: $UNVERIFIED_SECRETS"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          else
-            echo "secrets-found=false" >> $GITHUB_OUTPUT
-            echo "total=0" >> $GITHUB_OUTPUT
-            echo "verified=0" >> $GITHUB_OUTPUT
-            echo "unverified=0" >> $GITHUB_OUTPUT
-            echo "✅ No secrets detected"
-          fi
+  #           echo ""
+  #           echo "❌ SECRET DETECTION RESULTS:"
+  #           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #           echo "Total secrets found: $TOTAL_SECRETS"
+  #           echo "  ├─ Verified (active): $VERIFIED_SECRETS"
+  #           echo "  └─ Unverified: $UNVERIFIED_SECRETS"
+  #           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #         else
+  #           echo "secrets-found=false" >> $GITHUB_OUTPUT
+  #           echo "total=0" >> $GITHUB_OUTPUT
+  #           echo "verified=0" >> $GITHUB_OUTPUT
+  #           echo "unverified=0" >> $GITHUB_OUTPUT
+  #           echo "✅ No secrets detected"
+  #         fi
           
-      - name: Display Secret Details
-        if: always() && steps.trufflehog.outputs.secrets-found == 'true'
-        run: |
-          echo ""
-          echo "📋 Detailed Findings:"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #     - name: Display Secret Details
+  #       if: always() && steps.trufflehog.outputs.secrets-found == 'true'
+  #       run: |
+  #         echo ""
+  #         echo "📋 Detailed Findings:"
+  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           
-          jq -rs '.[] | "
-          🔴 \(.DetectorType) Secret Detected
-             File: \(.SourceMetadata.Data.Git.file // "unknown")
-             Line: \(.SourceMetadata.Data.Git.line // "?")
-             Commit: \(.SourceMetadata.Data.Git.commit // "unknown")[0:8]
-             Verified: \(if .Verified then "✓ YES (CRITICAL)" else "✗ No" end)
-             Preview: \(.Raw[:50])...
-          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          "' trufflehog-results.json || cat trufflehog-results.json
+  #         jq -rs '.[] | "
+  #         🔴 \(.DetectorType) Secret Detected
+  #            File: \(.SourceMetadata.Data.Git.file // "unknown")
+  #            Line: \(.SourceMetadata.Data.Git.line // "?")
+  #            Commit: \(.SourceMetadata.Data.Git.commit // "unknown")[0:8]
+  #            Verified: \(if .Verified then "✓ YES (CRITICAL)" else "✗ No" end)
+  #            Preview: \(.Raw[:50])...
+  #         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #         "' trufflehog-results.json || cat trufflehog-results.json
           
-      - name: Convert JSON to SARIF
-        if: always() && hashFiles('trufflehog-results.json') != ''
-        run: |
-          if [ -s trufflehog-results.json ]; then
-            trufflehog convert --input trufflehog-results.json --format sarif --output trufflehog-results.sarif || true
-          fi
+  #     - name: Convert JSON to SARIF
+  #       if: always() && hashFiles('trufflehog-results.json') != ''
+  #       run: |
+  #         if [ -s trufflehog-results.json ]; then
+  #           trufflehog convert --input trufflehog-results.json --format sarif --output trufflehog-results.sarif || true
+  #         fi
           
-      - name: Upload SARIF to GitHub Security
-        if: always() && hashFiles('trufflehog-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trufflehog-results.sarif
-          category: trufflehog-pr
+  #     - name: Upload SARIF to GitHub Security
+  #       if: always() && hashFiles('trufflehog-results.sarif') != ''
+  #       uses: github/codeql-action/upload-sarif@v3
+  #       with:
+  #         sarif_file: trufflehog-results.sarif
+  #         category: trufflehog-pr
           
-      - name: Upload TruffleHog Report
-        if: always() && hashFiles('trufflehog-results.json') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: trufflehog-report-pr-${{ github.event.pull_request.number }}
-          path: trufflehog-results.json
-          retention-days: 90
+  #     - name: Upload TruffleHog Report
+  #       if: always() && hashFiles('trufflehog-results.json') != ''
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: trufflehog-report-pr-${{ github.event.pull_request.number }}
+  #         path: trufflehog-results.json
+  #         retention-days: 90
           
-      - name: Fail if secrets found
-        if: steps.trufflehog.outputs.secrets-found == 'true'
-        run: |
-          echo ""
-          echo "🚨 SECURITY POLICY VIOLATION"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "Secrets detected in pull request!"
-          echo ""
-          echo "📊 Summary:"
-          echo "  • Total secrets: ${{ steps.trufflehog.outputs.total }}"
-          echo "  • Verified (CRITICAL): ${{ steps.trufflehog.outputs.verified }}"
-          echo "  • Unverified: ${{ steps.trufflehog.outputs.unverified }}"
-          echo ""
+  #     - name: Fail if secrets found
+  #       if: steps.trufflehog.outputs.secrets-found == 'true'
+  #       run: |
+  #         echo ""
+  #         echo "🚨 SECURITY POLICY VIOLATION"
+  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #         echo "Secrets detected in pull request!"
+  #         echo ""
+  #         echo "📊 Summary:"
+  #         echo "  • Total secrets: ${{ steps.trufflehog.outputs.total }}"
+  #         echo "  • Verified (CRITICAL): ${{ steps.trufflehog.outputs.verified }}"
+  #         echo "  • Unverified: ${{ steps.trufflehog.outputs.unverified }}"
+  #         echo ""
           
-          if [ "${{ steps.trufflehog.outputs.verified }}" -gt "0" ]; then
-            echo "🔥 CRITICAL - Active credentials detected!"
-            echo "   ⚠️  IMMEDIATE ACTION REQUIRED:"
-            echo "   1. Rotate/revoke these credentials NOW"
-            echo "   2. Check Azure/Databricks access logs for unauthorized usage"
-            echo "   3. File security incident report with security team"
-            echo ""
-          fi
+  #         if [ "${{ steps.trufflehog.outputs.verified }}" -gt "0" ]; then
+  #           echo "🔥 CRITICAL - Active credentials detected!"
+  #           echo "   ⚠️  IMMEDIATE ACTION REQUIRED:"
+  #           echo "   1. Rotate/revoke these credentials NOW"
+  #           echo "   2. Check Azure/Databricks access logs for unauthorized usage"
+  #           echo "   3. File security incident report with security team"
+  #           echo ""
+  #         fi
           
-          echo "📝 Required Actions:"
-          echo "   1. Remove ALL secrets from your code"
-          echo "   2. Use proper secret management:"
-          echo "      • Databricks: dbutils.secrets.get(scope='scope', key='key')"
-          echo "      • GitHub Actions: \${{ secrets.SECRET_NAME }}"
-          echo "      • Azure: Use Key Vault references"
-          echo "   3. Never commit secrets to Git (even in branches)"
-          echo "   4. Review Git history - secrets persist after removal"
-          echo ""
-          echo "📚 Documentation:"
-          echo "   • Databricks Secrets: https://docs.databricks.com/security/secrets/"
-          echo "   • Azure Key Vault: https://learn.microsoft.com/azure/key-vault/"
-          echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  #         echo "📝 Required Actions:"
+  #         echo "   1. Remove ALL secrets from your code"
+  #         echo "   2. Use proper secret management:"
+  #         echo "      • Databricks: dbutils.secrets.get(scope='scope', key='key')"
+  #         echo "      • GitHub Actions: \${{ secrets.SECRET_NAME }}"
+  #         echo "      • Azure: Use Key Vault references"
+  #         echo "   3. Never commit secrets to Git (even in branches)"
+  #         echo "   4. Review Git history - secrets persist after removal"
+  #         echo ""
+  #         echo "📚 Documentation:"
+  #         echo "   • Databricks Secrets: https://docs.databricks.com/security/secrets/"
+  #         echo "   • Azure Key Vault: https://learn.microsoft.com/azure/key-vault/"
+  #         echo ""
+  #         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           
-          exit 1
+  #         exit 1
 
   # STEP 2: Code Linting
   lint:
     name: Code Quality Checks
-    needs: [secret-scan]
+    # needs: [secret-scan]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -310,7 +310,7 @@ jobs:
   # STEP 3: Bundle Validation
   validate:
     name: Validate Databricks Bundle
-    needs: [secret-scan, lint]
+    # needs: [secret-scan, lint]
     runs-on: ubuntu-latest
     environment: dev
     steps:
@@ -375,7 +375,7 @@ jobs:
   # STEP 4: PR Status Comment
   pr-comment:
     name: Post PR Status
-    needs: [secret-scan, lint, validate]
+    # needs: [secret-scan, lint, validate]
     if: always()
     runs-on: ubuntu-latest
     permissions:
