@@ -1,86 +1,80 @@
-# TruffleHog Configuration for Databricks Asset Bundles
-# Place this file in the root of your repository
+# TruffleHog Configuration for Azure/Databricks/GitHub CI/CD
+# Optimized for enterprise Databricks projects on Azure
 
-# Paths to exclude from secret scanning
+# Paths to exclude from scanning
 exclude_paths:
   - .git/
-  - .github/
   - .databricks/
   - .venv/
   - venv/
   - __pycache__/
   - "*.pyc"
   - node_modules/
-  - .terraform/
-  - "*.tfstate"
-  - "*.tfstate.backup"
   - .pytest_cache/
   - htmlcov/
   - dist/
   - build/
   - "*.egg-info/"
+  - .coverage
+  - "*.log"
 
-# Specific detectors to enable (Databricks-focused)
+# Detector Configuration - Optimized for Azure/Databricks
 detectors:
+  # Primary Platform (Required)
   - name: azure
     enabled: true
   - name: databricks
     enabled: true
   - name: github
     enabled: true
-  - name: slack
-    enabled: true
-  - name: aws
-    enabled: true
-  - name: private-key
-    enabled: true
+  
+  # Generic Patterns (Safety Net)
   - name: generic-api-key
     enabled: true
-
-# Allowlist for known false positives
-allow:
-  # Paths that contain example/test data
-  paths:
-    - tests/fixtures/
-    - tests/test_data/
-    - examples/
-    - docs/examples/
-    - .github/workflows/  # Workflow files themselves
+  - name: uri
+    enabled: true
   
-  # Regex patterns to ignore (common false positives)
+  # Keys & Authentication (Common)
+  - name: private-key
+    enabled: true
+  - name: jwt
+    enabled: true
+  
+  # Databases (Databricks Integration)
+  - name: sqlserver
+    enabled: true
+  - name: postgres
+    enabled: true
+  - name: mysql
+    enabled: true
+  - name: mongodb
+    enabled: true
+
+# Allowlist - Minimal and specific
+allow:
+  paths:
+    - tests/fixtures/mock_data/README.md
+    - docs/examples/placeholder_config.example
+  
   regexes:
-    # Example/dummy credentials
-    - "example\\.com"
-    - "dummy.*secret"
-    - "fake.*token"
-    - "test.*key"
-    - "sample.*password"
-    - "placeholder"
-    - "your-.*-here"
-    - "xxx.*xxx"
-    - "yyy.*yyy"
-    - "zzz.*zzz"
+    # Documentation placeholders only
+    - "example\\.com$"
+    - "example\\.org$"
+    - "localhost$"
+    - "127\\.0\\.0\\.1$"
     
-    # Databricks workspace URLs (not secrets)
-    - "https://adb-[0-9]+\\.[0-9]+\\.azuredatabricks\\.net"
+    # Databricks workspace URLs (public endpoints, not secrets)
+    - "https://adb-[0-9]+\\.[0-9]+\\.azuredatabricks\\.net/?$"
     
-    # Common non-secret patterns
-    - "localhost"
-    - "127\\.0\\.0\\.1"
-    - "0\\.0\\.0\\.0"
-    
-    # Documentation and comments
-    - "INSERT.*HERE"
-    - "REPLACE.*WITH"
-    - "TODO"
-    - "FIXME"
+    # Template variables
+    - "\\$\\{[A-Z_]+\\}"     # ${API_KEY}
+    - "\\{\\{[A-Z_]+\\}\\}"  # {{API_KEY}}
+    - "<[A-Z_]+>"            # <API_KEY>
 
-# Verification settings
-verify: true  # Verify that found secrets are actually valid
+# Security Configuration
+verify: true           # Verify secrets for severity classification
+only-verified: false   # Catch ALL secrets (verified + unverified)
+fail-verified: true    # Always fail on verified secrets
 
-# Output format
-# json, yaml, or text
-output-format: text
-
-# Only fail on verified secrets (reduces false positives)
-only-verified: true
+# Output Configuration
+output-format: json    # JSON for CI/CD parsing
